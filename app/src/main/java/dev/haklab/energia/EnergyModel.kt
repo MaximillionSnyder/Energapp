@@ -62,6 +62,7 @@ class EnergyModel(
     var pendingReset: Boolean = false
         private set
 
+    @Synchronized
     fun reset() {
         pendingReset = false
         lastDeltaJ = 0.0
@@ -104,6 +105,7 @@ class EnergyModel(
      * (0.0 si el tramo se descarto), de modo que quien llama pueda atribuir el
      * incremento a la app en primer plano de ese instante.
      */
+    @Synchronized
     fun add(s: BatterySample): Double {
         sampleCount++
         if (firstTs == 0L) firstTs = s.timestampMs

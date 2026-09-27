@@ -10,6 +10,7 @@ import dev.haklab.energia.data.EnergyRepository
 import dev.haklab.energia.data.EnergyUiState
 import dev.haklab.energia.diag.Diag
 import dev.haklab.energia.ui.glyphs.Glifo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -81,7 +82,7 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
     private var permisoAvisado = false
 
     fun refrescarPermiso() {
-        val disponible = attribution.hasPermission()
+        val disponible = seguro("permiso") { attribution.hasPermission() } ?: false
         if (!disponible && !permisoAvisado) {
             permisoAvisado = true
             Diag.info("permiso", "sin acceso de uso: el reparto por app no esta disponible")
@@ -95,17 +96,24 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
     /** Recarga el registro de diagnostico fuera del hilo principal. */
     fun refrescarRegistro() {
         viewModelScope.launch {
-            _registro.value = withContext(Dispatchers.IO) { Diag.read() }
+            _registro.value = seguro("registro") {
+                withContext(Dispatchers.IO) { Diag.read() }
+            } ?: _registro.value
         }
     }
 
     fun borrarRegistro() {
         viewModelScope.launch {
-            _registro.value = withContext(Dispatchers.IO) {
-                Diag.clear()
-                Diag.read()
+            val limpio = seguro("registro") {
+                withContext(Dispatchers.IO) {
+                    Diag.clear()
+                    Diag.read()
+                }
             }
-            _anomaliaPrevia.value = false
+            if (limpio != null) {
+                _registro.value = limpio
+                _anomaliaPrevia.value = false
+            }
         }
     }
 
@@ -127,14 +135,29 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun refrescarApps() {
         viewModelScope.launch {
-            val marks = EnergyRepository.marksSnapshot()
-            val s = estado.value
-            val filas = withContext(Dispatchers.IO) {
-                if (marks.isEmpty()) emptyList()
-                else attribution.attribute(marks, s.sessionStartMs, System.currentTimeMillis())
-            }
+            val filas = seguro("atribucion") {
+                val marks = EnergyRepository.marksSnapshot()
+                val s = estado.value
+                withContext(Dispatchers.IO) {
+                    if (marks.isEmpty()) emptyList()
+                    else attribution.attribute(marks, s.sessionStartMs, System.currentTimeMillis())
+                }
+            } ?: return@launch
             _apps.value = filas
-            _permisoUso.value = attribution.hasPermission()
+            seguro("permiso") { attribution.hasPermission() }?.let { _permisoUso.value = it }
         }
+    }
+
+    /**
+     * Ejecuta una operacion de consulta al sistema sin dejar que una excepcion
+     * (p. ej. de UsageStatsManager) tumbe el proceso: se registra y se sigue.
+     */
+    private inline fun <T> seguro(etiqueta: String, bloque: () -> T): T? = try {
+        bloque()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (t: Throwable) {
+        Diag.error(etiqueta, "operacion fallida, se continua", t)
+        null
     }
 }

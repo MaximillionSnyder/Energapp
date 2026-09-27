@@ -32,7 +32,13 @@ import kotlinx.coroutines.launch
  */
 class MonitorService : Service() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /*
+     * El bucle va en un hilo de fondo, NO en Main: cada tick hace lecturas de
+     * Binder (BatteryManager, NotificationManager) y no puede competir con el
+     * hilo principal, que es el que atiende el foco de la ventana y sufre los
+     * ANR cuando se queda bloqueado mas de 5 s.
+     */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var loop: Job? = null
     private lateinit var sampler: BatterySampler
     private lateinit var wakeLock: PowerManager.WakeLock
@@ -43,6 +49,7 @@ class MonitorService : Service() {
     private var prevDiscardedMs = 0L
     private var warnedNoHardware = false
     private var enCarga = false
+    private var ticks = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -53,7 +60,11 @@ class MonitorService : Service() {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "energia:monitor").apply {
             setReferenceCounted(false)
-            acquire()
+        }
+        runCatching { wakeLock.acquire() }.onFailure { t ->
+            // Sin wake lock el sistema puede retrasar ticks, pero el servicio
+            // sigue vivo: es preferible eso a morir al crearse.
+            Diag.error("servicio", "no se pudo tomar el wake lock parcial", t)
         }
         createChannel()
         Diag.info("servicio", "servicio creado")
@@ -70,8 +81,23 @@ class MonitorService : Service() {
         val intervalMs = intent?.getLongExtra(EXTRA_INTERVAL_MS, DEFAULT_INTERVAL_MS)
             ?: DEFAULT_INTERVAL_MS
         this.intervalMs = intervalMs
+        // Android 12+ puede denegar la promocion a primer plano si el sistema
+        // reinicia el servicio sticky en segundo plano (p. ej. tras matar el
+        // proceso con el movil bloqueado): sin capturarlo, el proceso muere.
+        val enPrimerPlano = runCatching {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }.onFailure { t ->
+            Diag.error(
+                "servicio",
+                "no se pudo pasar a primer plano (posible reinicio en segundo plano): se detiene",
+                t,
+            )
+        }.isSuccess
+        if (!enPrimerPlano) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         EnergyRepository.setRunning(true, intervalMs)
-        startForeground(NOTIFICATION_ID, buildNotification())
         restartLoop(intervalMs)
         Diag.sessionStarted()
         Diag.info("servicio", "medicion iniciada con intervalo de ${intervalMs / 1000} s")
@@ -93,6 +119,8 @@ class MonitorService : Service() {
     private fun tick() {
         val now = System.currentTimeMillis()
         try {
+            ticks++
+            if (ticks == 1L || ticks % 12 == 0L) Diag.memoria("tick $ticks")
             if (lastTickMs > 0) {
                 val transcurrido = now - lastTickMs
                 if (transcurrido > intervalMs * 2 + 2_000) {

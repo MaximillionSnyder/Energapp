@@ -77,12 +77,16 @@ class BatterySampler(private val context: Context) {
     private val power: PowerManager? =
         context.getSystemService(Context.POWER_SERVICE) as? PowerManager
 
-    /** Refresco de [levelPct] cuando algun dispositivo no publique el sticky. */
-    private var cachedLevelPct: Int = -1
-    private var cachedStatus: Int = BatteryManager.BATTERY_STATUS_UNKNOWN
-    private var cachedPlugged: Int = 0
-    private var cachedVoltageMv: Int = -1
-    private var cachedTempTenthsC: Int = Int.MIN_VALUE
+    /*
+     * El receptor actualiza estos campos en el hilo principal y el bucle de
+     * muestreo los lee desde un hilo de fondo: deben ser volatiles para que la
+     * lectura vea el ultimo valor.
+     */
+    @Volatile private var cachedLevelPct: Int = -1
+    @Volatile private var cachedStatus: Int = BatteryManager.BATTERY_STATUS_UNKNOWN
+    @Volatile private var cachedPlugged: Int = 0
+    @Volatile private var cachedVoltageMv: Int = -1
+    @Volatile private var cachedTempTenthsC: Int = Int.MIN_VALUE
 
     /**
      * true si el fuel gauge reporta la corriente con el signo invertido

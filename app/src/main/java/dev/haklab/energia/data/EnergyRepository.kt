@@ -54,7 +54,11 @@ object EnergyRepository {
     private val _state = MutableStateFlow(EnergyUiState())
     val state: StateFlow<EnergyUiState> = _state.asStateFlow()
 
-    /** Pares (timestampMs, energiaJ del tramo) para atribuir por app. */
+    /**
+     * Pares (timestampMs, energiaJ del tramo) para atribuir por app.
+     * Lo escribe el bucle del servicio (hilo de fondo) y lo lee la UI: volatile.
+     */
+    @Volatile
     private var marks: List<Pair<Long, Double>> = emptyList()
 
     fun marksSnapshot(): List<Pair<Long, Double>> = marks

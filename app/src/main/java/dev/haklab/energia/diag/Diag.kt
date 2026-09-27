@@ -1,8 +1,11 @@
 package dev.haklab.energia.diag
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.Debug
 import android.os.Process
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,9 +38,11 @@ object Diag {
 
     private const val MAX_BYTES = 128 * 1024L
     private const val MAX_LINEAS_CRASH = 250
+    private const val MAX_TRAZA_SALIDA = 16 * 1024
     private const val PREFS = "diag"
     private const val KEY_STARTED = "svc_started_ms"
     private const val KEY_CLEAN = "svc_clean"
+    private const val KEY_ULTIMA_SALIDA = "ultima_salida_ms"
 
     private val formato = SimpleDateFormat("yy-MM-dd HH:mm:ss.SSS", Locale.US)
     private val cerrojo = Any()
@@ -78,7 +83,68 @@ object Diag {
                 )
                 prefs.edit().putBoolean(KEY_CLEAN, true).apply()
             }
+            registrarSalidasDelProceso(context)
         }
+        memoria("arranque de proceso")
+    }
+
+    /**
+     * Registra por que termino el proceso anterior segun el propio sistema.
+     *
+     * [ActivityManager.getHistoricalProcessExitReasons] es accesible para la
+     * propia app sin permisos (API 30+) e incluye la traza que guarda el
+     * sistema para crashes y ANR. Es la unica forma de ver un crash nativo, un
+     * ANR o un kill del sistema que no pasa por [installCrashHandler].
+     */
+    private fun registrarSalidasDelProceso(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val gestor =
+            context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return
+        val ultima = prefs.getLong(KEY_ULTIMA_SALIDA, 0L)
+        val salidas = try {
+            gestor.getHistoricalProcessExitReasons(context.packageName, 0, 8)
+        } catch (t: Throwable) {
+            return
+        }
+        var masReciente = ultima
+        // Llegan de la mas reciente a la mas antigua; se registran en orden.
+        for (info in salidas.asReversed()) {
+            val ts = info.timestamp
+            if (ts <= ultima) continue
+            if (ts > masReciente) masReciente = ts
+            val traza = try {
+                info.traceInputStream?.use { entrada ->
+                    entrada.readBytes().toString(Charsets.UTF_8)
+                }
+            } catch (_: Throwable) {
+                null
+            }?.trim()?.take(MAX_TRAZA_SALIDA)
+            escribirAhora(
+                "W", "salida",
+                "el sistema cerro el proceso anterior: ${razon(info.reason)}" +
+                    (info.description?.let { " · $it" } ?: "") +
+                    " · ${formato.format(Date(ts))}" +
+                    (if (!traza.isNullOrEmpty()) "\n$traza" else ""),
+            )
+        }
+        if (masReciente > ultima) prefs.edit().putLong(KEY_ULTIMA_SALIDA, masReciente).apply()
+    }
+
+    private fun razon(codigo: Int): String = when (codigo) {
+        ApplicationExitInfo.REASON_EXIT_SELF -> "salida propia"
+        ApplicationExitInfo.REASON_SIGNALED -> "matado por senal (SIGKILL/SIGSEGV)"
+        ApplicationExitInfo.REASON_LOW_MEMORY -> "matado por memoria baja (LMK)"
+        ApplicationExitInfo.REASON_CRASH -> "crash de la app (excepcion)"
+        ApplicationExitInfo.REASON_CRASH_NATIVE -> "crash nativo"
+        ApplicationExitInfo.REASON_ANR -> "ANR: la app dejo de responder"
+        ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "fallo de inicializacion"
+        ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "cambio de permisos"
+        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "uso excesivo de recursos"
+        ApplicationExitInfo.REASON_USER_REQUESTED -> "cerrado por el usuario"
+        ApplicationExitInfo.REASON_USER_STOPPED -> "detenido por el usuario"
+        ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "dependencia caida"
+        ApplicationExitInfo.REASON_OTHER -> "otro (kill del sistema)"
+        else -> "codigo $codigo"
     }
 
     fun info(etiqueta: String, mensaje: String) = registro("I", etiqueta, mensaje)
@@ -88,6 +154,32 @@ object Diag {
     fun error(etiqueta: String, mensaje: String, t: Throwable? = null) {
         val texto = if (t == null) mensaje else "$mensaje · ${t.javaClass.simpleName}: ${t.message}"
         registro("E", etiqueta, texto)
+    }
+
+    /**
+     * Deja en el registro una foto del consumo de memoria del proceso.
+     *
+     * El trabajo real (leer `smaps_rollup` para el PSS) va al hilo del
+     * escritor: nunca debe ejecutarse en el hilo principal, que es el que
+     * sufre los ANR.
+     */
+    fun memoria(etiqueta: String) {
+        if (!listo) return
+        escritor.execute {
+            try {
+                val rt = Runtime.getRuntime()
+                val javaMb = (rt.totalMemory() - rt.freeMemory()) / 1_048_576
+                val maxMb = rt.maxMemory() / 1_048_576
+                val nativoMb = Debug.getNativeHeapAllocatedSize() / 1_048_576
+                val pssMb = Debug.getPss() / 1024
+                escribirAhora(
+                    "I", "memoria",
+                    "$etiqueta: pss=${pssMb}MB · java=${javaMb}MB/$maxMb · nativo=${nativoMb}MB",
+                )
+            } catch (_: Throwable) {
+                // El diagnostico de memoria nunca debe tumbar a la app.
+            }
+        }
     }
 
     /** Captura cualquier excepcion no controlada y delega en el manejador previo. */

@@ -102,6 +102,12 @@ class MainActivity : ComponentActivity() {
         // Al volver de Ajustes, el usuario pudo haber concedido el acceso de uso.
         vm.refrescarPermiso()
         vm.refrescarApps()
+        Diag.memoria("onResume")
+    }
+
+    override fun onStop() {
+        Diag.memoria("onStop")
+        super.onStop()
     }
 
     /**
