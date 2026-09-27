@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Energía</string>
+    <string name="subtitle">Medición real de consumo por hardware, sin root</string>
+
+    <string name="action_start">Iniciar</string>
+    <string name="action_stop">Detener</string>
+    <string name="action_reset">Reiniciar</string>
+
+    <string name="section_live">Medida en vivo</string>
+    <string name="section_verdict">Veredicto frente al medidor del sistema</string>
+    <string name="section_system">Cómo lo calcula Android</string>
+    <string name="section_attribution">Reparto por app en primer plano</string>
+    <string name="section_screen">Gasto segun estado de pantalla</string>
+    <string name="screen_on">Pantalla encendida: %1$s J · %2$s mW de media · %3$s s</string>
+    <string name="screen_off">Pantalla apagada: %1$s J · %2$s mW de media · %3$s s</string>
+    <string name="screen_off_share">Con la pantalla apagada se fue el %1$s %% de la energía medida.</string>
+    <string name="screen_no_data">Sin tramos válidos todavía.</string>
+
+    <string name="channel_name">Medición de energía</string>
+    <string name="channel_desc">Mantiene el muestreo del medidor de batería</string>
+    <string name="notif_title">Midiendo consumo</string>
+    <string name="notif_text">Media %1$.0f mW · %2$.4f %% de batería</string>
+    <string name="notif_no_current">Sin medidor de corriente en este dispositivo</string>
+
+    <string name="waiting_first_sample">Esperando la primera muestra…</string>
+    <string name="sample_count">Muestras tomadas: %1$d</string>
+    <string name="no_current">Corriente: no disponible en este dispositivo</string>
+    <string name="discharge_current">Corriente de descarga: %1$s mA (%2$s)</string>
+    <string name="power_now">Potencia instantánea: %1$s mW</string>
+    <string name="power_unknown">Potencia: desconocida</string>
+    <string name="voltage">Voltaje: %1$s V</string>
+    <string name="temperature">Temperatura: %1$s °C</string>
+    <string name="level">Nivel del sistema: %1$d %%</string>
+    <string name="state_charging">Estado: cargando (tramo excluido de la medida)</string>
+    <string name="state_discharging">Estado: descargando</string>
+    <string name="charge_counter">Contador de carga: %1$s mAh</string>
+    <string name="charge_counter_unsupported">Contador de carga: no soportado</string>
+    <string name="full_capacity">Capacidad a plena carga estimada: %1$s mAh</string>
+
+    <string name="src_average">media del hardware</string>
+    <string name="src_now">instantánea</string>
+    <string name="src_derived">derivada del nivel, baja precisión</string>
+
+    <string name="energy_total">Energía medida: %1$s J  (%2$s %% de la batería)</string>
+    <string name="charge_total">Carga integrada: %1$s mAh</string>
+    <string name="avg_power">Potencia media: %1$s mW</string>
+    <string name="avg_unknown">Potencia media: sin datos válidos</string>
+    <string name="valid_time">Tiempo válido: %1$s s · descartado: %2$s s</string>
+    <string name="gaps_note">Se descartaron tramos (huecos o carga): no se extrapolan.</string>
+
+    <string name="system_explainer">Android no mide tu consumo: reparte el 100 %% del gasto del periodo con un modelo (power_profile.xml). Su nivel tiene resolución de 1 %%, un escalón de ~200 J.</string>
+    <string name="system_ms">Lo que implicaría esa cifra: %1$s J medidos = %2$s mW de media</string>
+    <string name="energy_in_battery">Energía útil de referencia: %1$s J</string>
+
+    <string name="verdict_wait">Sin datos suficientes todavía.</string>
+    <string name="verdict_short">Mide al menos 30 s para poder comparar.</string>
+    <string name="verdict_measured">Potencia media medida: %1$s mW</string>
+    <string name="verdict_ratio">El medidor del sistema implicaría ~%1$s× más consumo que el medido.</string>
+    <string name="verdict_explain">Esa diferencia no es consumo: es la cuantización del 1 %% del nivel, que a intervalos cortos no tiene resolución suficiente.</string>
+    <string name="verdict_consistent">El medidor del sistema es coherente con lo medido en esta sesión.</string>
+
+    <string name="need_usage_access">Para repartir el consumo por app hace falta conceder «acceso de uso».</string>
+    <string name="grant_usage_access">Conceder acceso de uso</string>
+    <string name="no_marks">Aún no hay tramos medidos.</string>
+    <string name="no_hardware_current">Este dispositivo no expone corriente por hardware: la medida es aproximada.</string>
+    <string name="attribution_explainer">Energía gastada mientras cada app estaba en primer plano (medida real, no estimación del sistema). El resto va a «sin atribuir»: pantalla apagada y servicios del sistema.</string>
+    <string name="attribution_row">%1$s — %2$s J (%3$s %% del total) · %4$s s delante · %5$s mW de media</string>
+    <string name="unattributed">Sin atribuir</string>
+</resources>

@@ -1,0 +1,20 @@
+# Gradle
+.gradle/
+build/
+app/build/
+.kotlin/
+
+# Config local del SDK
+local.properties
+
+# IDE
+.idea/
+*.iml
+*.hprof
+
+# Firma
+*.jks
+*.keystore
+
+# Sistema
+.DS_Store

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Con Compose la UI no usa el sistema de temas de Views: este tema solo
+      evita la ActionBar nativa y da un fondo coherente antes del primer frame.
+      Se deriva de Material3 para que el arranque no destelle.
+    -->
+    <style name="Theme.Energia" parent="android:Theme.Material.NoActionBar" />
+</resources>
