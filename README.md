@@ -148,6 +148,10 @@ pudieran verificar.
 
 ## Compilar
 
+**La APK oficial se compila en GitHub Actions al etiquetar (ver más abajo), no
+en local.** Lo de esta sección queda para verificar cambios en el propio equipo
+o para reproducir el binario.
+
 ### Con Android Studio / Gradle
 
 Requiere JDK 17 y el SDK de Android. El proyecto trae el **wrapper de Gradle
@@ -170,7 +174,7 @@ entorno (`ENERGIA_KEYSTORE`, `ENERGIA_KEYSTORE_PASSWORD`, `ENERGIA_KEY_ALIAS`,
 `ENERGIA_KEY_PASSWORD`); sin ellas se compila sin firmar, de modo que cualquiera
 puede verificar el proyecto con solo clonarlo.
 
-### Compilado y firmado en el propio teléfono (Termux, aarch64)
+### Compilado y firmado en el propio teléfono (Termux, aarch64) — histórico
 
 Este proyecto **se compiló y se firmó en el dispositivo**, sin PC. Receta
 verificada, por si hay que repetirla:
@@ -233,16 +237,21 @@ Tres escollos reales, con su solución:
 
 ## Release y CI (GitHub Actions)
 
-`.github/workflows/android.yml` compila la app en cada push y publica el release
-al etiquetar. Lo único que necesita son los secretos de firma, que ya están
-cargados en el repositorio (`ENERGIA_KEYSTORE_BASE64`,
-`ENERGIA_KEYSTORE_PASSWORD`, `ENERGIA_KEY_ALIAS`, `ENERGIA_KEY_PASSWORD`).
+`.github/workflows/android.yml` es el **único sitio donde se compila la app**.
+Lo único que necesita son los secretos de firma, que ya están cargados en el
+repositorio (`ENERGIA_KEYSTORE_BASE64`, `ENERGIA_KEYSTORE_PASSWORD`,
+`ENERGIA_KEY_ALIAS`, `ENERGIA_KEY_PASSWORD`).
 
 | Evento | Qué hace |
 | --- | --- |
-| push a `main` / pull request | `assembleDebug` y APK como artifact `energia-debug` |
 | tag `v*` | `assembleRelease` (R8 + firma), artifact `energia-release` y **Release de GitHub con la APK adjunta** |
-| manual (Actions ▸ Android ▸ Run workflow) | Igual que el tag, pero sin publicar Release |
+| manual (Actions ▸ Android ▸ Run workflow) | Lo mismo, pero sin publicar Release (para probar el flujo sin etiquetar) |
+
+Antes de compilar, el flujo **exige que el tag coincida con el `versionName`**
+de `app/build.gradle.kts` y aborta con un mensaje claro si no: así no se publica
+una `v3.0` que en realidad lleve dentro la 2.0. El procedimiento de release es,
+entonces: subir `versionCode` y `versionName` en una pull request a `main`,
+fusionarla, y etiquetar el commit resultante.
 
 ```bash
 git tag v3.0
@@ -299,7 +308,8 @@ muestras, tamaño del registro) y avisa si el último tick está retrasado.
 
 ## Estado de compilación
 
-**Compilado y firmado.** `BUILD SUCCESSFUL` en las dos variantes:
+**Compilado y firmado.** `BUILD SUCCESSFUL` en las dos variantes (el
+binario que se distribuye es el del release de GitHub Actions):
 
 - **debug**: 29 MB (normal en Compose de depuración), firmado con el
   certificado de depuración;
