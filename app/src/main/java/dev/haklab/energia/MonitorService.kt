@@ -188,7 +188,7 @@ class MonitorService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.notif_title))
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setSmallIcon(R.drawable.ic_notif_bolt)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="icon_background">#FF1B5E20</color>
+    <!-- Icono del lanzador: el rayo de la app sobre el fondo del panel. -->
+    <color name="icon_background">#FF0B1113</color>
+    <!-- Fondo de ventana: evita el destello blanco antes del primer frame. -->
+    <color name="ventana_fondo">#FFF5F8F7</color>
 </resources>

@@ -6,34 +6,58 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.viewModels
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.haklab.energia.diag.Diag
 import dev.haklab.energia.ui.EnergyViewModel
 import dev.haklab.energia.ui.Pantalla
-import dev.haklab.energia.ui.screens.PantallaApps
-import dev.haklab.energia.ui.screens.PantallaHistorial
+import dev.haklab.energia.ui.components.PuntoLatido
+import dev.haklab.energia.ui.glyphs.Glifo
+import dev.haklab.energia.ui.screens.PantallaAnalisis
 import dev.haklab.energia.ui.screens.PantallaRegistro
 import dev.haklab.energia.ui.screens.PantallaSistema
 import dev.haklab.energia.ui.screens.PantallaVivo
@@ -60,11 +84,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             EnergiaTheme {
                 AppEnergia(vm)
-                // El reparto por app y el registro se recargan al abrir su pestaña.
+                // El reparto por app y el registro se recargan al abrir su pantalla.
                 val pantalla by vm.pantalla.collectAsStateWithLifecycle()
                 LaunchedEffect(pantalla) {
                     when (pantalla) {
-                        Pantalla.APPS -> vm.refrescarApps()
+                        Pantalla.ANALISIS -> vm.refrescarApps()
                         Pantalla.REGISTRO -> vm.refrescarRegistro()
                         else -> Unit
                     }
@@ -94,7 +118,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppEnergia(vm: EnergyViewModel) {
     val estado by vm.estado.collectAsStateWithLifecycle()
@@ -105,42 +128,48 @@ private fun AppEnergia(vm: EnergyViewModel) {
     val anomalia by vm.anomaliaPrevia.collectAsStateWithLifecycle()
     val contexto = LocalContext.current
 
+    BackHandler(enabled = pantalla == Pantalla.REGISTRO) { vm.cerrarRegistro() }
+
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(title = {
-                Column {
-                    Text("Energía", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        text = if (estado.running) "Midiendo · ${estado.intervalMs / 1000} s" else "Detenido",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            })
+            if (pantalla != Pantalla.REGISTRO) {
+                Cabecera(
+                    corriendo = estado.running,
+                    intervaloMs = estado.intervalMs,
+                    anomalia = anomalia,
+                    onRegistro = vm::abrirRegistro,
+                )
+            }
         },
         bottomBar = {
-            NavigationBar {
-                Pantalla.entries.forEach { p ->
-                    NavigationBarItem(
-                        selected = pantalla == p,
-                        onClick = { vm.seleccionar(p) },
-                        icon = { IconoSinRecurso(p) },
-                        label = { Text(p.titulo) },
-                    )
-                }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 10.dp)
+                    .navigationBarsPadding(),
+            ) {
+                Dock(pantalla = pantalla, onSeleccionar = vm::seleccionar)
             }
         },
     ) { relleno ->
-        Column(Modifier.fillMaxSize().padding(relleno)) {
-            when (pantalla) {
+        AnimatedContent(
+            targetState = pantalla,
+            transitionSpec = {
+                (fadeIn(tween(240)) + slideInVertically(tween(280)) { alto -> alto / 26 })
+                    .togetherWith(fadeOut(tween(140)))
+            },
+            label = "pantalla",
+            modifier = Modifier.fillMaxSize().padding(relleno),
+        ) { p ->
+            when (p) {
                 Pantalla.VIVO -> PantallaVivo(
                     estado = estado,
                     onIniciar = vm::iniciar,
                     onDetener = vm::detener,
                     onReiniciar = vm::reiniciar,
                 )
-                Pantalla.HISTORIAL -> PantallaHistorial(estado = estado)
-                Pantalla.APPS -> PantallaApps(
+                Pantalla.ANALISIS -> PantallaAnalisis(
                     estado = estado,
                     apps = apps,
                     tienePermiso = permiso,
@@ -152,6 +181,7 @@ private fun AppEnergia(vm: EnergyViewModel) {
                     estado = estado,
                     registro = registro,
                     anomaliaPrevia = anomalia,
+                    onVolver = vm::cerrarRegistro,
                     onRefrescar = vm::refrescarRegistro,
                     onBorrar = vm::borrarRegistro,
                     onDescartar = vm::descartarAnomalia,
@@ -169,16 +199,101 @@ private fun AppEnergia(vm: EnergyViewModel) {
     }
 }
 
-/**
- * Iconos de la barra inferior sin depender de material-icons-extended (que no
- * esta en cache): se usa el icono de bateria del sistema para todas y el
- * estado se distingue por la etiqueta y la seleccion. Documentado como
- * limitacion consciente en el README.
- */
+/** Cabecera: marca, estado de la medicion y acceso al registro. */
 @Composable
-private fun IconoSinRecurso(p: Pantalla) {
-    Icon(
-        painter = painterResource(android.R.drawable.ic_lock_idle_charging),
-        contentDescription = p.titulo,
-    )
+private fun Cabecera(
+    corriendo: Boolean,
+    intervaloMs: Long,
+    anomalia: Boolean,
+    onRegistro: () -> Unit,
+) {
+    val tenue = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(start = 18.dp, end = 8.dp, top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Energía", style = MaterialTheme.typography.titleLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PuntoLatido(
+                    color = if (corriendo) MaterialTheme.colorScheme.primary else tenue,
+                    activo = corriendo,
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    text = if (corriendo) "midiendo · cada ${intervaloMs / 1000} s" else "en reposo",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tenue,
+                )
+            }
+        }
+        Box {
+            IconButton(onClick = onRegistro) {
+                Glifo(
+                    Glifo.Terminal,
+                    Modifier.size(22.dp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    trazo = 1.8f,
+                )
+            }
+            if (anomalia) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = (-10).dp, y = 10.dp)
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.error),
+                )
+            }
+        }
+    }
+}
+
+/** Barra inferior flotante: la pestana activa se expande con su nombre. */
+@Composable
+private fun Dock(pantalla: Pantalla, onSeleccionar: (Pantalla) -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shadowElevation = 10.dp,
+    ) {
+        Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Pantalla.pestanas.forEach { p ->
+                val seleccionada = p == pantalla
+                val fondo by animateColorAsState(
+                    targetValue = if (seleccionada) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    animationSpec = tween(220),
+                    label = "fondo-pestana",
+                )
+                val tinta by animateColorAsState(
+                    targetValue = if (seleccionada) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    animationSpec = tween(220),
+                    label = "tinta-pestana",
+                )
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .clip(CircleShape)
+                        .background(fondo)
+                        .clickable(role = Role.Tab) { onSeleccionar(p) }
+                        .padding(vertical = 11.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Glifo(p.glifo, Modifier.size(18.dp), color = tinta, trazo = 2.1f)
+                    if (seleccionada) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(p.titulo, style = MaterialTheme.typography.labelLarge, color = tinta)
+                    }
+                }
+            }
+        }
+    }
 }

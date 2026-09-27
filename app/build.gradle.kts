@@ -5,6 +5,19 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
 }
 
+/*
+ * Para el release con R8, AGP 9 registra una tarea que conserva los grupos de
+ * Compose y pide `org.jetbrains.kotlin:compose-group-mapping` en la version del
+ * Kotlin embebido (2.2.10), que nunca se publico en Maven Central: la
+ * resolucion falla y el release no compila. Se fuerza a 2.4.10, que si existe
+ * y ademas coincide con el plugin de Compose que declara esta app.
+ */
+configurations.configureEach {
+    if (name.startsWith("composeMappingProducer")) {
+        resolutionStrategy.force("org.jetbrains.kotlin:compose-group-mapping:2.4.10")
+    }
+}
+
 android {
     namespace = "dev.haklab.energia"
     compileSdk = 37
@@ -14,13 +27,41 @@ android {
         minSdk = 29
         // 34 = Android 14, la API del dispositivo de prueba.
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 3
+        versionName = "3.0"
+    }
+
+    /*
+     * Firma del release: el keystore NO esta en el repositorio. Se inyecta en
+     * tiempo de compilacion por variables de entorno (asi lo hace el flujo de
+     * GitHub Actions con sus secretos). Si no estan, se compila sin firmar, lo
+     * que permite que cualquiera verifique el proyecto con solo clonarlo.
+     */
+    val rutaKeystore: String? = System.getenv("ENERGIA_KEYSTORE")
+    signingConfigs {
+        if (rutaKeystore != null) {
+            create("release") {
+                storeFile = file(rutaKeystore)
+                storePassword = System.getenv("ENERGIA_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ENERGIA_KEY_ALIAS")
+                keyPassword = System.getenv("ENERGIA_KEY_PASSWORD")
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 acorta y ofusca; los recursos se podan con la misma decision.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

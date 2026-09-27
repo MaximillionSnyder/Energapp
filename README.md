@@ -90,24 +90,37 @@ El resultado es *«energía gastada mientras X estaba delante»*: medible y
 verificable. El resto se muestra como «sin atribuir» (pantalla apagada,
 servicios del sistema), sin maquillarlo.
 
-## Interfaz (versión 2.0)
+## Interfaz (versión 3.0)
 
-Reescrita en **Jetpack Compose + Material 3** (ui 1.12.1, material3 1.4.0),
-con arquitectura `ViewModel` + `StateFlow` + `collectAsStateWithLifecycle` y un
-repositorio observable como fuente única de verdad. Cuatro pantallas con
-navegación inferior:
+Rediseño completo como **panel de instrumentos**: fondo casi negro en oscuro,
+superficies apiladas con un filo de 1 dp, cifras con ancho tabular (no bailan
+al cambiar de valor) y una pareja de colores con significado fijo — **aqua para
+la pantalla encendida**, **ámbar para la apagada** — que se repite en el
+medidor, el gráfico y las barras. Sigue al sistema en claro/oscuro, con paleta
+propia: no se usa Material You porque el acento es parte de la lectura, no
+decoración.
+
+Tres pestañas en un **dock flotante** (la activa se expande con su nombre) y el
+registro como pantalla secundaria:
 
 | Pantalla | Contenido |
 | --- | --- |
-| **En vivo** | Consumo medido, gráfico de potencia, lectura instantánea, controles |
-| **Historial** | Reparto de energía por estado de pantalla y progreso del muestreo |
-| **Apps** | Energía por aplicación, con barra de proporción |
-| **Sistema** | El veredicto frente al medidor de Android y el método usado |
+| **En vivo** | Medidor de aguja con la potencia instantánea, controles, gráfico de potencia y rejilla de lectura instantánea |
+| **Análisis** | Reparto por estado de pantalla, calidad del muestreo y energía por aplicación, en una sola página |
+| **Sistema** | El veredicto frente al medidor de Android —con el escalón del 1 % traducido a segundos de uso real—, lo que mide la app y su error medido |
+| **Registro** | Diagnóstico local; se abre desde el icono de terminal de la cabecera, con punto rojo si la sesión anterior murió sin cerrarse |
 
-Los gráficos están **dibujados a mano con `Canvas` de Compose**
-(`ui/charts/Charts.kt`), sin librería. Motivos: no añaden dependencias ni peso,
-y permiten pintar en otro color los tramos con la **pantalla apagada**, que es
-justo la lectura que interesa.
+El medidor es un arco de 240° con marcas cada 20°, aguja con muelle y halo; el
+arco vira al ámbar por encima del 65 % de la escala. Los gráficos siguen
+dibujados **a mano con `Canvas`** (`ui/charts/`): no añaden dependencias y son
+los únicos que pintan en otro color los tramos con la pantalla apagada. La
+línea **no se suaviza a propósito**: una medida que sube y baja se dibuja como
+sube y baja, sin inventar curvatura.
+
+La iconografía también es propia (`ui/glyphs/Glyphs.kt`), dibujada con `Canvas`
+sobre una retícula de 24×24: 14 glifos (rayo, pulso, escudo, reloj, terminal,
+papelera…) sin `material-icons-extended` y sin vectores XML que aquí no se
+pudieran verificar.
 
 ### Tecnología descartada, y por qué
 
@@ -130,17 +143,16 @@ justo la lectura que interesa.
   previews de Android Studio y de los screenshot tests de AGP) publica nativos
   solo para `linux/x86-64`, `mac/x86_64`, `mac-arm64` y `win/x86-64` — no existe
   `linux-arm64`. Lo mismo pasa con Robolectric (`nativeruntime-dist-compat`) y
-  con Paparazzi. La unica verificacion visual posible es instalar la APK en el
-  telefono.
-- **Iconos de la barra inferior**: se usa un recurso del sistema para las cuatro
-  pestañas porque `material-icons-extended` no está disponible sin descarga;
-  se distinguen por etiqueta y por el indicador de selección.
+  con Paparazzi. Por eso este rediseño se ha verificado compilando y midiendo el
+  APK, no con capturas: la comprobación visual queda para el teléfono.
 
 ## Compilar
 
 ### Con Android Studio / Gradle
 
-Requiere JDK 17 y el SDK de Android. Crea `local.properties`:
+Requiere JDK 17 y el SDK de Android. El proyecto trae el **wrapper de Gradle
+9.5.0** (`./gradlew`), así que no hace falta instalar Gradle. Crea
+`local.properties` con la ruta del SDK:
 
 ```properties
 sdk.dir=/ruta/a/tu/android-sdk
@@ -150,7 +162,13 @@ Y ejecuta:
 
 ```bash
 ./gradlew assembleDebug     # -> app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease   # -> app/build/outputs/apk/release/app-release.apk (R8)
 ```
+
+El release sale **firmado si le llegan las credenciales** por variables de
+entorno (`ENERGIA_KEYSTORE`, `ENERGIA_KEYSTORE_PASSWORD`, `ENERGIA_KEY_ALIAS`,
+`ENERGIA_KEY_PASSWORD`); sin ellas se compila sin firmar, de modo que cualquiera
+puede verificar el proyecto con solo clonarlo.
 
 ### Compilado y firmado en el propio teléfono (Termux, aarch64)
 
@@ -168,8 +186,7 @@ verificada, por si hay que repetirla:
 cd ~/proyectos/energia-app
 export JAVA_HOME=~/buildtools/jdk-17.0.20.1+1
 export PATH="$JAVA_HOME/bin:$PATH"
-~/.gradle/wrapper/dists/gradle-9.5.0-bin/*/gradle-9.5.0/bin/gradle \
-    assembleDebug --no-daemon --console=plain
+./gradlew assembleDebug --no-daemon --console=plain
 ```
 
 Tres escollos reales, con su solución:
@@ -179,14 +196,15 @@ Tres escollos reales, con su solución:
    `com.android.application`.
 2. **El `aapt2` que descarga AGP es x86-64** y no arranca en Android aarch64
    (`Daemon startup failed`). Se resuelve con un `aapt2` nativo compilado con el
-   NDK y la propiedad `android.aapt2FromMavenOverride` en `gradle.properties`
-   (ya incluida).
+   NDK y la propiedad `android.aapt2FromMavenOverride`, que en este equipo vive
+   en `~/.gradle/gradle.properties` (ver la nota de abajo).
 3. **La versión de Kotlin la manda AGP 9.3.0**: el compilador es
    `kotlin-compiler-embeddable:2.2.10` (verificado con `:app:dependencies
    --configuration kotlinCompilerClasspath`). Aunque el plugin Compose se declare
    como 2.4.10, eso no sube el compilador; para usar una KGP superior habría que
    añadirla explícitamente al classpath del buildscript.
-4. **El APK hay que firmarlo a mano**: Gradle no lo firmó. Se firma con el
+4. **El APK de depuración conviene verificarlo**: en este Gradle salió sin
+   firmar, y Android no instala un paquete sin firma. Se firma con el
    `apksigner` del SDK, que es un script que necesita `java` en el `PATH`:
    ```bash
    sh ~/buildtools/sdk/build-tools/37.0.0/apksigner sign \
@@ -194,10 +212,51 @@ Tres escollos reales, con su solución:
      --key-pass pass:android --ks-key-alias androiddebugkey \
      app/build/outputs/apk/debug/app-debug.apk
    ```
+   (El release no tiene este problema: Gradle lo firma con las variables de
+   entorno de firma, y en GitHub Actions con los secretos del repositorio.)
+
+5. **R8 y los grupos de Compose.** Sin esto, `assembleRelease` muere con
+   «Could not find org.jetbrains.kotlin:compose-group-mapping:2.2.10». AGP 9
+   registra la tarea `produceReleaseComposeMapping` y pide ese artefacto en la
+   versión del Kotlin embebido (2.2.10), que **nunca se publicó** en Maven
+   Central (arranca en la 2.3.0-Beta1). El `build.gradle.kts` fuerza esa
+   dependencia a la 2.4.10 — la misma del plugin de Compose de la app — que sí
+   existe, y el release compila.
+
+> El override de `aapt2` **no** está en el `gradle.properties` del repositorio,
+> sino en `~/.gradle/gradle.properties` de este equipo: así GitHub Actions
+> (x86-64, con el `aapt2` de Maven) compila el mismo código sin tocar nada.
 
 > `compileSdk` es 37 porque es la única plataforma instalada; `targetSdk` se
 > fijó en **34** (la API real del dispositivo) para no depender de que Android 14
 > acepte instalar un APK dirigido a un SDK posterior.
+
+## Release y CI (GitHub Actions)
+
+`.github/workflows/android.yml` compila la app en cada push y publica el release
+al etiquetar. Lo único que necesita son los secretos de firma, que ya están
+cargados en el repositorio (`ENERGIA_KEYSTORE_BASE64`,
+`ENERGIA_KEYSTORE_PASSWORD`, `ENERGIA_KEY_ALIAS`, `ENERGIA_KEY_PASSWORD`).
+
+| Evento | Qué hace |
+| --- | --- |
+| push a `main` / pull request | `assembleDebug` y APK como artifact `energia-debug` |
+| tag `v*` | `assembleRelease` (R8 + firma), artifact `energia-release` y **Release de GitHub con la APK adjunta** |
+| manual (Actions ▸ Android ▸ Run workflow) | Igual que el tag, pero sin publicar Release |
+
+```bash
+git tag v3.0
+git push origin v3.0        # dispara la Release con la APK firmada
+```
+
+### El keystore
+
+La firma es la identidad de la app: Android solo acepta una actualización si
+viene firmada con la misma clave. El keystore de release **no está en el
+repositorio** (`.gitignore` lo cubre); vive en `~/keystores/energia-release.jks`
+de este equipo, con sus credenciales en `~/keystores/CREDENCIALES.txt` (permisos
+600) y copiado en los secretos de GitHub. Guárdalo con copia de seguridad: sin
+él no se pueden publicar actualizaciones que Android acepte.
 
 ## Verificación
 
@@ -240,23 +299,24 @@ muestras, tamaño del registro) y avisa si el último tick está retrasado.
 
 ## Estado de compilación
 
-**Compilado y firmado en el dispositivo.** `BUILD SUCCESSFUL`, sin errores de
-Kotlin (un solo aviso: `unsafeCheckOpNoThrow` está deprecado). Verificado:
+**Compilado y firmado.** `BUILD SUCCESSFUL` en las dos variantes:
 
-- los 14 archivos Kotlin compilan (`compileDebugKotlin`), incluidos los de
-  Compose y el diagnóstico;
-- APK de 29 MB (normal en Compose de depuración), 9 dex;
-- firma v3 válida (certificado de depuración de Android) — sin firma, Android
-  no instala el paquete;
-- `aapt2 dump badging`: paquete `dev.haklab.energia`, `minSdk 29`,
-  `targetSdk 34`, actividad lanzable `MainActivity`, etiqueta «Energía»;
+- **debug**: 29 MB (normal en Compose de depuración), firmado con el
+  certificado de depuración;
+- **release con R8**: **2,1 MB**, un solo `classes.dex`, firmado con el
+  certificado propio del proyecto (`CN=Energia`, firma v3) y sin errores de R8;
+- los 17 archivos Kotlin compilan (un aviso: `unsafeCheckOpNoThrow` deprecado);
+- `aapt2 dump badging`: paquete `dev.haklab.energia`, versión `3.0`
+  (versionCode 3), `minSdk 29`, `targetSdk 34`, actividad lanzable
+  `MainActivity`, etiqueta «Energía»;
 - `resources.arsc` sin comprimir (requisito de Android 11+);
-- icono adaptativo empaquetado (`mipmap-anydpi-v26/ic_launcher.xml`) y
-  referenciado en el manifiesto.
+- icono adaptativo empaquetado (`mipmap-anydpi-v26/ic_launcher.xml`), ya con el
+  rayo aqua sobre el fondo del panel.
 
-Lo que **no** se pudo comprobar aquí: que la app se instale y funcione en el
+Lo que **no** se puede comprobar aquí: que la app se instale y funcione en el
 teléfono. Termux no tiene uid de shell, así que no puede instalar ni listar
-paquetes. Esa prueba queda para el usuario.
+paquetes. Esa prueba queda para el usuario; el APK del release de GitHub
+Actions ya sale firmado y listo para instalar.
 
 ## Estructura
 
@@ -266,9 +326,16 @@ paquetes. Esa prueba queda para el usuario.
 | `EnergyModel.kt` | Integración trapezoidal, descarte de tramos, reparto por pantalla, capacidad estimada |
 | `UsageAttribution.kt` | Segmentos de primer plano y reparto de la energía medida |
 | `MonitorService.kt` | Foreground service (tipo `specialUse`), wake lock, estado observable y salud de la sesión |
-| `MainActivity.kt` | Medida en vivo, veredicto frente al sistema, reparto por pantalla y por app |
 | `EnergiaApp.kt` | `Application`: instala la telemetría y el capturador de crashes antes de todo |
 | `diag/Diag.kt` | Registro local rotativo, captura de crashes y detección de sesión anómala |
+| `MainActivity.kt` | Armazón: cabecera con estado, dock de pestañas, navegación animada y permiso de notificaciones |
+| `ui/theme/Theme.kt` | Paleta del panel (claro/oscuro), tipografía de cifras tabulares y formas |
+| `ui/components/Panel.kt` | Panel, cifra, tile, pastilla, barra de proporción y punto que late |
+| `ui/charts/Charts.kt` | Gráfico de potencia por estado de pantalla y barra apilada |
+| `ui/charts/Gauge.kt` | Medidor de aguja con halo, marcas y zona alta en ámbar |
+| `ui/glyphs/Glyphs.kt` | Los 14 glifos, dibujados con `Canvas` sobre retícula de 24×24 |
+| `ui/screens/Pantallas.kt` | Las cuatro pantallas: En vivo, Análisis, Sistema y Registro |
+| `ui/EnergyViewModel.kt` / `ui/Format.kt` | Estado y acciones de la UI; formato de magnitudes |
 
 ## Decisiones que conviene conocer
 

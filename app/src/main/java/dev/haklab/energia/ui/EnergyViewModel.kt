@@ -9,6 +9,7 @@ import dev.haklab.energia.UsageAttribution
 import dev.haklab.energia.data.EnergyRepository
 import dev.haklab.energia.data.EnergyUiState
 import dev.haklab.energia.diag.Diag
+import dev.haklab.energia.ui.glyphs.Glifo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,13 +17,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Pestañas de la app. */
-enum class Pantalla(val titulo: String) {
-    VIVO("En vivo"),
-    HISTORIAL("Historial"),
-    APPS("Apps"),
-    SISTEMA("Sistema"),
-    REGISTRO("Registro"),
+/** Pantallas de la app. Solo [pestanas] viven en la barra inferior. */
+enum class Pantalla(val titulo: String, val glifo: Glifo) {
+    VIVO("En vivo", Glifo.Rayo),
+    ANALISIS("Análisis", Glifo.Pulso),
+    SISTEMA("Sistema", Glifo.Escudo),
+    REGISTRO("Registro", Glifo.Terminal);
+
+    companion object {
+        /** Las tres pestanas de la barra inferior, en orden. */
+        val pestanas: List<Pantalla> = listOf(VIVO, ANALISIS, SISTEMA)
+    }
 }
 
 class EnergyViewModel(app: Application) : AndroidViewModel(app) {
@@ -34,6 +39,9 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _pantalla = MutableStateFlow(Pantalla.VIVO)
     val pantalla: StateFlow<Pantalla> = _pantalla.asStateFlow()
+
+    /** Pestana desde la que se abrio el registro, para poder volver. */
+    private var pestanaPrevia: Pantalla = Pantalla.VIVO
 
     private val _apps = MutableStateFlow<List<UsageAttribution.AppUsage>>(emptyList())
     val apps: StateFlow<List<UsageAttribution.AppUsage>> = _apps.asStateFlow()
@@ -54,6 +62,15 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun seleccionar(p: Pantalla) { _pantalla.value = p }
+
+    /** Abre el registro recordando desde que pestana se hizo. */
+    fun abrirRegistro() {
+        if (_pantalla.value != Pantalla.REGISTRO) pestanaPrevia = _pantalla.value
+        _pantalla.value = Pantalla.REGISTRO
+    }
+
+    /** Vuelve a la pestana desde la que se abrio el registro. */
+    fun cerrarRegistro() { _pantalla.value = pestanaPrevia }
 
     fun iniciar() = MonitorService.start(getApplication(), estado.value.intervalMs)
 
