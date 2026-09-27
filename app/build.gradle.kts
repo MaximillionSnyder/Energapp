@@ -27,8 +27,8 @@ android {
         minSdk = 29
         // 34 = Android 14, la API del dispositivo de prueba.
         targetSdk = 34
-        versionCode = 3
-        versionName = "3.0"
+        versionCode = 4
+        versionName = "3.1"
     }
 
     /*
