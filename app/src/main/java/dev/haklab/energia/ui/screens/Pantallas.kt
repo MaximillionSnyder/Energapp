@@ -1,5 +1,9 @@
 package dev.haklab.energia.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -30,10 +35,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.haklab.energia.UsageAttribution
+import dev.haklab.energia.diag.Diag
 import dev.haklab.energia.data.EnergyUiState
 import dev.haklab.energia.ui.Format
 import dev.haklab.energia.ui.charts.GaugePotencia
@@ -595,21 +602,41 @@ fun PantallaSistema(estado: EnergyUiState, modifier: Modifier = Modifier) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Pantalla: registro (diagnostico local)                              */
+/* Pantalla: registro (diagnostico local por sesiones)                 */
 /* ------------------------------------------------------------------ */
+
+/** Cuantas lineas de una sesion se muestran en el detalle. */
+private const val MAX_LINEAS_DETALLE = 800
 
 @Composable
 fun PantallaRegistro(
     estado: EnergyUiState,
     registro: String,
+    sesiones: List<Diag.Sesion>,
+    sesionDetalle: String?,
+    sesionAbierta: Diag.Sesion?,
     anomaliaPrevia: Boolean,
     onVolver: () -> Unit,
     onRefrescar: () -> Unit,
     onBorrar: () -> Unit,
     onDescartar: () -> Unit,
     onCompartir: () -> Unit,
+    onAbrirSesion: (Long) -> Unit,
+    onCerrarSesion: () -> Unit,
+    onCompartirSesion: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (sesionDetalle != null) {
+        DetalleRegistro(
+            sesion = sesionAbierta,
+            texto = sesionDetalle,
+            onVolver = onCerrarSesion,
+            onCompartir = onCompartirSesion,
+            modifier = modifier,
+        )
+        return
+    }
+
     val tenue = MaterialTheme.colorScheme.onSurfaceVariant
     val acento = MaterialTheme.colorScheme.primary
     val ultima = estado.sample?.timestampMs
@@ -651,13 +678,21 @@ fun PantallaRegistro(
             ) {
                 Text(
                     "La app o el servicio murieron sin parada ordenada: un crash o el " +
-                        "sistema mató el proceso. El detalle está en el registro.",
+                        "sistema mató el proceso. Abre esa sesión para ver el detalle.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
+                val sospechosa = sesiones.firstOrNull { it.sinCerrar || !it.enCurso && it.errores > 0 }
                 Spacer(Modifier.height(6.dp))
-                TextButton(onClick = onDescartar) {
-                    Text("Descartar aviso", color = MaterialTheme.colorScheme.onErrorContainer)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (sospechosa != null) {
+                        TextButton(onClick = { onAbrirSesion(sospechosa.inicioMs) }) {
+                            Text("Ver sesión", color = MaterialTheme.colorScheme.onErrorContainer)
+                        }
+                    }
+                    TextButton(onClick = onDescartar) {
+                        Text("Descartar aviso", color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
                 }
             }
         }
@@ -711,14 +746,151 @@ fun PantallaRegistro(
             }
         }
 
+        Panel(modifier = Modifier.weight(1f), titulo = "Sesiones") {
+            if (sesiones.isEmpty()) {
+                Text(
+                    "Sin sesiones todavía.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tenue,
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(sesiones, key = { it.inicioMs }) { s ->
+                        FilaSesion(sesion = s, onAbrir = onAbrirSesion)
+                    }
+                    item {
+                        TextButton(
+                            onClick = { onAbrirSesion(0L) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Glifo(Glifo.Terminal, Modifier.size(15.dp), color = acento)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Ver todo el histórico")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Fila de la lista: fecha, resumen y estado de una sesion. */
+@Composable
+private fun FilaSesion(sesion: Diag.Sesion, onAbrir: (Long) -> Unit) {
+    val tenue = MaterialTheme.colorScheme.onSurfaceVariant
+    val acento = MaterialTheme.colorScheme.primary
+    val sinCerrar = sesion.sinCerrar
+    val conError = sesion.errores > 0
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { onAbrir(sesion.inicioMs) },
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(Format.fechaHora(sesion.inicioMs), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    textoResumen(sesion),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tenue,
+                )
+            }
+            Pastilla(
+                texto = when {
+                    sesion.enCurso -> "en curso"
+                    sinCerrar -> "sin cerrar"
+                    else -> "cerrada"
+                },
+                color = when {
+                    conError -> MaterialTheme.colorScheme.error
+                    sinCerrar -> MaterialTheme.colorScheme.secondary
+                    else -> acento
+                },
+                glifo = if (conError || sinCerrar) Glifo.Aviso else null,
+            )
+        }
+    }
+}
+
+/** Detalle de una sesion (o de todo el historico con [sesion] = null). */
+@Composable
+private fun DetalleRegistro(
+    sesion: Diag.Sesion?,
+    texto: String,
+    onVolver: () -> Unit,
+    onCompartir: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val contexto = LocalContext.current
+    val tenue = MaterialTheme.colorScheme.onSurfaceVariant
+    val acento = MaterialTheme.colorScheme.primary
+
+    Column(
+        modifier.fillMaxSize().padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onVolver) {
+                Glifo(Glifo.Atras, Modifier.size(22.dp), color = MaterialTheme.colorScheme.onSurface)
+            }
+            Spacer(Modifier.width(4.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = sesion?.let { Format.fechaHora(it.inicioMs) } ?: "Todo el histórico",
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    text = sesion?.let { textoResumen(it) } ?: "sesiones + histórico anterior",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tenue,
+                )
+            }
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Button(onClick = onCompartir, modifier = Modifier.weight(1f), shape = CircleShape) {
+                Glifo(Glifo.Compartir, Modifier.size(15.dp), color = MaterialTheme.colorScheme.onPrimary)
+                Spacer(Modifier.width(7.dp))
+                Text("Compartir")
+            }
+            OutlinedButton(
+                onClick = { copiarAlPortapapeles(contexto, texto) },
+                modifier = Modifier.weight(1f),
+                shape = CircleShape,
+            ) {
+                Text("Copiar")
+            }
+        }
+
         Panel(modifier = Modifier.weight(1f), titulo = "Diario") {
-            if (registro.isBlank()) {
+            if (texto.isBlank()) {
                 Text(
                     "Sin entradas todavía.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = tenue,
                 )
             } else {
+                val lineas = texto.lines()
+                val mostradas = if (lineas.size > MAX_LINEAS_DETALLE) lineas.takeLast(MAX_LINEAS_DETALLE) else lineas
+                val recorte = if (lineas.size > MAX_LINEAS_DETALLE) {
+                    "(...${lineas.size - MAX_LINEAS_DETALLE} líneas anteriores omitidas...)\n"
+                } else {
+                    ""
+                }
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -728,7 +900,7 @@ fun PantallaRegistro(
                 ) {
                     SelectionContainer {
                         Text(
-                            text = registro.lines().takeLast(400).joinToString("\n"),
+                            text = recorte + mostradas.joinToString("\n"),
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             color = tenue,
@@ -739,4 +911,22 @@ fun PantallaRegistro(
             }
         }
     }
+}
+
+/** Resumen de una sesion en una linea: duracion, lineas, avisos y errores. */
+private fun textoResumen(s: Diag.Sesion): String = buildString {
+    val duracion = when {
+        s.enCurso -> "en curso"
+        s.finMs > s.inicioMs -> Format.segundos(s.finMs - s.inicioMs)
+        else -> "—"
+    }
+    append(duracion)
+    append(" · ${s.lineas} líneas")
+    if (s.avisos > 0) append(" · ${s.avisos} avisos")
+    if (s.errores > 0) append(" · ${s.errores} errores")
+}
+
+private fun copiarAlPortapapeles(contexto: Context, texto: String) {
+    val gestor = contexto.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+    gestor.setPrimaryClip(ClipData.newPlainText("Energía", texto))
 }

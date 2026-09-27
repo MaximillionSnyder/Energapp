@@ -54,6 +54,18 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
     private val _registro = MutableStateFlow("")
     val registro: StateFlow<String> = _registro.asStateFlow()
 
+    /** Sesiones de diagnostico, de la mas reciente a la mas antigua. */
+    private val _sesiones = MutableStateFlow<List<Diag.Sesion>>(emptyList())
+    val sesiones: StateFlow<List<Diag.Sesion>> = _sesiones.asStateFlow()
+
+    /** Texto de la sesion abierta en el detalle, o null si no hay ninguna. */
+    private val _sesionDetalle = MutableStateFlow<String?>(null)
+    val sesionDetalle: StateFlow<String?> = _sesionDetalle.asStateFlow()
+
+    /** Resumen de la sesion abierta; null con "ver todo" o sin detalle. */
+    private val _sesionAbierta = MutableStateFlow<Diag.Sesion?>(null)
+    val sesionAbierta: StateFlow<Diag.Sesion?> = _sesionAbierta.asStateFlow()
+
     /** true si la ultima sesion de medicion murio sin parada ordenada. */
     private val _anomaliaPrevia = MutableStateFlow(Diag.anomaliaPrevia.value)
     val anomaliaPrevia: StateFlow<Boolean> = _anomaliaPrevia.asStateFlow()
@@ -67,11 +79,17 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
     /** Abre el registro recordando desde que pestana se hizo. */
     fun abrirRegistro() {
         if (_pantalla.value != Pantalla.REGISTRO) pestanaPrevia = _pantalla.value
+        _sesionAbierta.value = null
+        _sesionDetalle.value = null
         _pantalla.value = Pantalla.REGISTRO
     }
 
     /** Vuelve a la pestana desde la que se abrio el registro. */
-    fun cerrarRegistro() { _pantalla.value = pestanaPrevia }
+    fun cerrarRegistro() {
+        _sesionAbierta.value = null
+        _sesionDetalle.value = null
+        _pantalla.value = pestanaPrevia
+    }
 
     fun iniciar() = MonitorService.start(getApplication(), estado.value.intervalMs)
 
@@ -93,13 +111,34 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
     /** Intent de Ajustes para que el usuario conceda "acceso de uso". */
     fun intentPermiso(): Intent = attribution.settingsIntent()
 
-    /** Recarga el registro de diagnostico fuera del hilo principal. */
+    /** Recarga el registro y la lista de sesiones fuera del hilo principal. */
     fun refrescarRegistro() {
         viewModelScope.launch {
             _registro.value = seguro("registro") {
                 withContext(Dispatchers.IO) { Diag.read() }
             } ?: _registro.value
+            _sesiones.value = seguro("registro") {
+                withContext(Dispatchers.IO) { Diag.sesiones() }
+            } ?: _sesiones.value
         }
+    }
+
+    /** Abre una sesion concreta (o todo el historico con [inicioMs] = 0). */
+    fun abrirSesion(inicioMs: Long) {
+        _sesionAbierta.value = _sesiones.value.firstOrNull { it.inicioMs == inicioMs }
+        viewModelScope.launch {
+            _sesionDetalle.value = seguro("registro") {
+                withContext(Dispatchers.IO) {
+                    if (inicioMs == 0L) Diag.read() else Diag.leerSesion(inicioMs)
+                }
+            }
+        }
+    }
+
+    /** Vuelve de la sesion abierta a la lista de sesiones. */
+    fun cerrarSesion() {
+        _sesionAbierta.value = null
+        _sesionDetalle.value = null
     }
 
     fun borrarRegistro() {
@@ -112,6 +151,11 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (limpio != null) {
                 _registro.value = limpio
+                _sesionAbierta.value = null
+                _sesionDetalle.value = null
+                _sesiones.value = seguro("registro") {
+                    withContext(Dispatchers.IO) { Diag.sesiones() }
+                } ?: emptyList()
                 _anomaliaPrevia.value = false
             }
         }
@@ -128,6 +172,13 @@ class EnergyViewModel(app: Application) : AndroidViewModel(app) {
             .setType("text/plain")
             .putExtra(Intent.EXTRA_SUBJECT, "Registro de diagnóstico de Energía")
             .putExtra(Intent.EXTRA_TEXT, _registro.value.ifBlank { "(registro vacío)" })
+
+    /** Hoja de compartir del sistema con la sesion abierta. */
+    fun intentCompartirSesion(): Intent =
+        Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_SUBJECT, "Sesión de diagnóstico de Energía")
+            .putExtra(Intent.EXTRA_TEXT, _sesionDetalle.value?.ifBlank { "(sesión vacía)" } ?: "(sin sesión)")
 
     /**
      * Recalcula el reparto por app con la energia medida hasta ahora. Es una

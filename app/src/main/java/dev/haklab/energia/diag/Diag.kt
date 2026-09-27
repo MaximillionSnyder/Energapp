@@ -24,8 +24,13 @@ import java.util.concurrent.Executors
  * queda en el almacenamiento privado de la app y el usuario puede verlo y
  * compartirlo desde la pestana Registro.
  *
- * - Registro rotativo en `filesDir/diag/`: `diag.log` + `diag.1.log`
- *   (128 KB cada uno). Al desbordar, el actual pasa a `diag.1.log`.
+ * - Una **sesion por proceso**: `filesDir/diag/sesion-<ms>.log` (+ su rotado
+ *   `sesion-<ms>.1.log`). Al desbordar, el actual pasa al rotado.
+ * - El Registro lista las sesiones y abre solo la elegida; asi el diario deja
+ *   de ser un unico texto de cientos de lineas. Se conservan las ultimas
+ *   [MAX_SESIONES] o [MAX_BYTES_TOTAL] bytes, lo que se cumpla primero.
+ * - Los ficheros `diag.log` / `diag.1.log` de versiones anteriores se
+ *   conservan como "historico" y siguen visibles, pero no se escriben.
  * - Las escrituras normales van a un hilo propio para no bloquear UI ni
  *   servicio; la de un crash es sincrona, porque despues el proceso muere.
  * - Instalando [installCrashHandler] se captura cualquier excepcion no
@@ -36,22 +41,42 @@ import java.util.concurrent.Executors
  */
 object Diag {
 
-    private const val MAX_BYTES = 128 * 1024L
+    private const val MAX_BYTES_SESION = 96 * 1024L
+    private const val MAX_SESIONES = 12
+    private const val MAX_BYTES_TOTAL = 1024 * 1024L
     private const val MAX_LINEAS_CRASH = 250
     private const val MAX_TRAZA_SALIDA = 16 * 1024
+    private const val PREFIJO_SESION = "sesion-"
+    private const val SUFIJO_ROTADO = ".1.log"
+    private const val MARCA_CIERRE = "sesion de medicion cerrada"
     private const val PREFS = "diag"
     private const val KEY_STARTED = "svc_started_ms"
     private const val KEY_CLEAN = "svc_clean"
     private const val KEY_ULTIMA_SALIDA = "ultima_salida_ms"
 
+    /** Resumen de una sesion, para listarla y abrirla desde el Registro. */
+    data class Sesion(
+        val inicioMs: Long,
+        val finMs: Long,
+        val lineas: Int,
+        val avisos: Int,
+        val errores: Int,
+        val enCurso: Boolean,
+        val sinCerrar: Boolean,
+    )
+
     private val formato = SimpleDateFormat("yy-MM-dd HH:mm:ss.SSS", Locale.US)
+    private val niveles = setOf("I", "W", "E", "C")
     private val cerrojo = Any()
     private val escritor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "diag-writer").apply { isDaemon = true }
     }
 
+    private lateinit var dir: File
     private lateinit var archivo: File
     private lateinit var rodado: File
+    private lateinit var historico: File
+    private lateinit var historicoRodado: File
     private lateinit var prefs: SharedPreferences
     @Volatile private var listo = false
 
@@ -65,9 +90,12 @@ object Diag {
         if (listo) return
         synchronized(cerrojo) {
             if (listo) return
-            val dir = File(context.filesDir, "diag").apply { mkdirs() }
-            archivo = File(dir, "diag.log")
-            rodado = File(dir, "diag.1.log")
+            dir = File(context.filesDir, "diag").apply { mkdirs() }
+            historico = File(dir, "diag.log")
+            historicoRodado = File(dir, "diag.1.log")
+            val ahora = System.currentTimeMillis()
+            archivo = File(dir, "$PREFIJO_SESION$ahora.log")
+            rodado = File(dir, "$PREFIJO_SESION$ahora$SUFIJO_ROTADO")
             prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             listo = true
 
@@ -84,6 +112,7 @@ object Diag {
                 prefs.edit().putBoolean(KEY_CLEAN, true).apply()
             }
             registrarSalidasDelProceso(context)
+            runCatching { purgarSesiones() }
         }
         memoria("arranque de proceso")
     }
@@ -217,28 +246,77 @@ object Diag {
     /** Marca la sesion como cerrada limpiamente (parada ordenada del servicio). */
     fun sessionStopped() {
         if (listo) prefs.edit().putBoolean(KEY_CLEAN, true).apply()
+        registro("I", "sesion", "$MARCA_CIERRE limpiamente")
     }
 
-    /** Devuelve el registro (rotado + actual), recortado a [maxCaracteres]. */
+    /** Resumen de las sesiones guardadas, de la mas reciente a la mas antigua. */
+    fun sesiones(): List<Sesion> {
+        if (!listo) return emptyList()
+        val actual = archivo.name
+        val ficheros = synchronized(cerrojo) {
+            dir.listFiles { f -> idDeSesion(f) != null }
+        } ?: return emptyList()
+        return ficheros.mapNotNull { f ->
+            val id = idDeSesion(f) ?: return@mapNotNull null
+            val texto = synchronized(cerrojo) { textoDeSesion(id) }
+            var lineas = 0
+            var avisos = 0
+            var errores = 0
+            for (linea in texto.lineSequence()) {
+                lineas++
+                when (nivelDeLinea(linea)) {
+                    "W" -> avisos++
+                    "E", "C" -> errores++
+                }
+            }
+            val fin = if (f.name == actual) 0L else f.lastModified()
+            Sesion(
+                inicioMs = id,
+                finMs = fin,
+                lineas = lineas,
+                avisos = avisos,
+                errores = errores,
+                enCurso = f.name == actual,
+                sinCerrar = f.name != actual &&
+                    texto.contains("medicion iniciada") &&
+                    !texto.contains(MARCA_CIERRE),
+            )
+        }.sortedByDescending { it.inicioMs }
+    }
+
+    /** Texto completo de una sesion concreta, recortado a [maxCaracteres]. */
+    fun leerSesion(inicioMs: Long, maxCaracteres: Int = 64 * 1024): String {
+        if (!listo) return ""
+        val texto = synchronized(cerrojo) { textoDeSesion(inicioMs) }
+        return recortar(texto, maxCaracteres)
+    }
+
+    /**
+     * Devuelve el historico completo (ficheros antiguos + todas las sesiones),
+     * recortado a [maxCaracteres]. Es la vista "ver todo".
+     */
     fun read(maxCaracteres: Int = 64 * 1024): String {
         if (!listo) return ""
         val texto = synchronized(cerrojo) {
             buildString {
-                if (rodado.exists()) append(rodado.readText())
-                if (archivo.exists()) append(archivo.readText())
+                if (historicoRodado.exists()) append(historicoRodado.readText())
+                if (historico.exists()) append(historico.readText())
+                for (id in idsDeSesion().sorted()) append(textoDeSesion(id))
             }
         }
-        return if (texto.length <= maxCaracteres) texto
-        else "(...recorte de ${texto.length - maxCaracteres} caracteres...)\n" +
-            texto.takeLast(maxCaracteres)
+        return recortar(texto, maxCaracteres)
     }
 
-    /** Borra el registro y las marcas de sesion. */
+    /** Borra el registro, todas las sesiones y las marcas de sesion. */
     fun clear() {
         if (!listo) return
         synchronized(cerrojo) {
-            rodado.delete()
-            archivo.delete()
+            historico.delete()
+            historicoRodado.delete()
+            for (id in idsDeSesion()) {
+                File(dir, "$PREFIJO_SESION$id.log").delete()
+                File(dir, "$PREFIJO_SESION$id$SUFIJO_ROTADO").delete()
+            }
             prefs.edit().putLong(KEY_STARTED, 0L).putBoolean(KEY_CLEAN, true).apply()
         }
         _anomaliaPrevia.value = false
@@ -260,7 +338,7 @@ object Diag {
         try {
             synchronized(cerrojo) {
                 val linea = "${formato.format(Date())} $nivel $etiqueta: $mensaje\n"
-                if (archivo.length() + linea.toByteArray().size > MAX_BYTES) {
+                if (archivo.length() + linea.toByteArray().size > MAX_BYTES_SESION) {
                     rodado.delete()
                     archivo.renameTo(rodado)
                 }
@@ -275,6 +353,62 @@ object Diag {
             // El diagnostico nunca debe tumbar a quien lo usa.
         }
     }
+
+    /**
+     * Conserva las ultimas [MAX_SESIONES] o [MAX_BYTES_TOTAL] bytes, lo que se
+     * cumpla primero. La sesion en curso es la mas reciente y nunca se borra.
+     */
+    private fun purgarSesiones() {
+        val ids = idsDeSesion().sortedDescending()
+        val conservar = mutableListOf<Long>()
+        var bytes = 0L
+        for (id in ids) {
+            val tam = bytesDeSesion(id)
+            if (conservar.isNotEmpty() && (conservar.size >= MAX_SESIONES || bytes + tam > MAX_BYTES_TOTAL)) {
+                break
+            }
+            conservar += id
+            bytes += tam
+        }
+        val mantener = conservar.toHashSet()
+        for (id in ids) {
+            if (id in mantener) continue
+            File(dir, "$PREFIJO_SESION$id.log").delete()
+            File(dir, "$PREFIJO_SESION$id$SUFIJO_ROTADO").delete()
+        }
+    }
+
+    private fun idsDeSesion(): List<Long> =
+        dir.listFiles { f -> idDeSesion(f) != null }?.mapNotNull { idDeSesion(it) } ?: emptyList()
+
+    private fun idDeSesion(f: File): Long? {
+        if (!f.name.startsWith(PREFIJO_SESION) || !f.name.endsWith(".log")) return null
+        val id = f.name.removePrefix(PREFIJO_SESION).removeSuffix(".log").toLongOrNull() ?: return null
+        return if (id > 0) id else null
+    }
+
+    private fun textoDeSesion(id: Long): String = buildString {
+        val r = File(dir, "$PREFIJO_SESION$id$SUFIJO_ROTADO")
+        val f = File(dir, "$PREFIJO_SESION$id.log")
+        if (r.exists()) append(r.readText())
+        if (f.exists()) append(f.readText())
+    }
+
+    private fun bytesDeSesion(id: Long): Long =
+        File(dir, "$PREFIJO_SESION$id.log").length() +
+            File(dir, "$PREFIJO_SESION$id$SUFIJO_ROTADO").length()
+
+    /** Nivel de una linea del diario ("I"/"W"/"E"/"C"), o null si es una traza. */
+    private fun nivelDeLinea(linea: String): String? {
+        val partes = linea.split(' ', limit = 4)
+        if (partes.size < 3 || partes[1].length < 8 || !partes[1].contains(':')) return null
+        return partes[2].takeIf { it in niveles }
+    }
+
+    private fun recortar(texto: String, maxCaracteres: Int): String =
+        if (texto.length <= maxCaracteres) texto
+        else "(...recorte de ${texto.length - maxCaracteres} caracteres...)\n" +
+            texto.takeLast(maxCaracteres)
 
     private fun contextoDispositivo(context: Context): String {
         val version = runCatching {

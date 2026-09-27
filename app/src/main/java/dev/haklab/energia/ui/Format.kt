@@ -1,10 +1,16 @@
 package dev.haklab.energia.ui
 
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 
 /** Formateo de magnitudes para la UI, en un solo sitio. */
 object Format {
+
+    /** Fecha y hora cortas de una sesion: "27 sep 15:52". */
+    fun fechaHora(ms: Long): String =
+        SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(ms))
 
     fun mw(v: Double): String = when {
         v.isNaN() -> "—"

@@ -131,10 +131,15 @@ private fun AppEnergia(vm: EnergyViewModel) {
     val apps by vm.apps.collectAsStateWithLifecycle()
     val permiso by vm.permisoUso.collectAsStateWithLifecycle()
     val registro by vm.registro.collectAsStateWithLifecycle()
+    val sesiones by vm.sesiones.collectAsStateWithLifecycle()
+    val sesionDetalle by vm.sesionDetalle.collectAsStateWithLifecycle()
+    val sesionAbierta by vm.sesionAbierta.collectAsStateWithLifecycle()
     val anomalia by vm.anomaliaPrevia.collectAsStateWithLifecycle()
     val contexto = LocalContext.current
 
-    BackHandler(enabled = pantalla == Pantalla.REGISTRO) { vm.cerrarRegistro() }
+    BackHandler(enabled = pantalla == Pantalla.REGISTRO) {
+        if (sesionDetalle != null) vm.cerrarSesion() else vm.cerrarRegistro()
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -186,6 +191,9 @@ private fun AppEnergia(vm: EnergyViewModel) {
                 Pantalla.REGISTRO -> PantallaRegistro(
                     estado = estado,
                     registro = registro,
+                    sesiones = sesiones,
+                    sesionDetalle = sesionDetalle,
+                    sesionAbierta = sesionAbierta,
                     anomaliaPrevia = anomalia,
                     onVolver = vm::cerrarRegistro,
                     onRefrescar = vm::refrescarRegistro,
@@ -196,6 +204,16 @@ private fun AppEnergia(vm: EnergyViewModel) {
                             Intent.createChooser(
                                 vm.intentCompartirRegistro(),
                                 "Compartir registro",
+                            ),
+                        )
+                    },
+                    onAbrirSesion = vm::abrirSesion,
+                    onCerrarSesion = vm::cerrarSesion,
+                    onCompartirSesion = {
+                        contexto.startActivity(
+                            Intent.createChooser(
+                                vm.intentCompartirSesion(),
+                                "Compartir sesión",
                             ),
                         )
                     },
