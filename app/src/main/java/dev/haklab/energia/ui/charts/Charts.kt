@@ -162,12 +162,16 @@ fun PowerLineChart(
             )
 
             // La curva se parte segun el estado de pantalla: el color dice en
-            // que estado se consumio esa energia.
+            // que estado se consumio esa energia. El tramo arranca en [inicio]
+            // y llega al menos hasta [inicio + 1]: el punto donde cambia el
+            // estado se comparte con el tramo siguiente, de modo que la linea
+            // no se corta y el indice avanza SIEMPRE (un `fin` igual a `inicio`
+            // dejaria el bucle girando sin fin, creando un Path por vuelta).
             var inicio = 0
             while (inicio < validos.size - 1) {
                 val encendida = validos[inicio].screenOn
-                var fin = inicio
-                while (fin < validos.size - 1 && validos[fin + 1].screenOn == encendida) fin++
+                var fin = inicio + 1
+                while (fin < validos.size - 1 && validos[fin].screenOn == encendida) fin++
                 val segmento = Path().apply {
                     moveTo(px(validos[inicio].tSeconds), py(validos[inicio].milliwatts))
                     for (k in inicio + 1..fin) {
